@@ -6,6 +6,8 @@
     <title>AnonsTech Money Tracker Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Library Tambahan untuk OCR -->
+    <script src='https://unpkg.com/tesseract.js@v4.0.1/dist/tesseract.min.js'></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
@@ -13,14 +15,28 @@
         .glass-card { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.5); box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05); }
         .premium-shadow { box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05); }
         .fab-gradient { background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%); }
+        .ai-gradient { background: linear-gradient(135deg, #8b5cf6 0%, #d946ef 100%); }
         .animate-in { animation: fadeIn 0.4s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         #loginOverlay { backdrop-filter: blur(25px); z-index: 9999; }
         .chart-container { position: relative; height: 300px; width: 100%; }
         @media (max-width: 640px) { .chart-container { height: 250px; } }
+        #cameraOverlay { display: none; position: fixed; inset: 0; background: black; z-index: 200; }
+        #videoFeed { width: 100%; height: 100%; object-fit: cover; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen pb-12">
+
+    <!-- KAMERA OVERLAY -->
+    <div id="cameraOverlay">
+        <video id="videoFeed" autoplay playsinline></video>
+        <div class="absolute bottom-10 left-0 right-0 flex justify-around items-center px-10">
+            <button onclick="closeCamera()" class="w-12 h-12 bg-white/20 rounded-full text-white"><i class="fas fa-times"></i></button>
+            <button onclick="takeSnapshot()" class="w-20 h-20 bg-white rounded-full border-8 border-white/30"></button>
+            <div class="w-12 h-12"></div>
+        </div>
+        <canvas id="captureCanvas" class="hidden"></canvas>
+    </div>
 
     <!-- LOGIN SCREEN -->
     <div id="loginOverlay" class="fixed inset-0 bg-slate-900/40 flex items-center justify-center p-4 text-slate-800">
@@ -56,6 +72,21 @@
     </nav>
 
     <main class="max-w-7xl mx-auto p-4 md:p-8 space-y-6">
+        
+        <!-- AI PREDICTION CARD (NEW) -->
+        <div class="ai-gradient p-6 rounded-[2rem] text-white shadow-xl relative overflow-hidden animate-in">
+            <div class="relative z-10">
+                <div class="flex items-center mb-2">
+                    <i class="fas fa-robot mr-2"></i>
+                    <span class="text-[10px] font-bold uppercase tracking-widest opacity-80">AI Financial Analysis</span>
+                </div>
+                <h2 class="text-xl font-bold mb-1">Prediksi Pengeluaran Akhir Bulan</h2>
+                <div class="text-3xl font-black mb-4" id="aiPredictionValue">Rp 0</div>
+                <p class="text-xs opacity-90 leading-relaxed" id="aiAdvice">Menganalisis data transaksi kamu...</p>
+            </div>
+            <i class="fas fa-brain absolute -right-4 -bottom-4 text-9xl opacity-10"></i>
+        </div>
+
         <div class="flex items-center justify-end text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-[-1.5rem]">
             <span id="indicatorDot" class="w-2 h-2 bg-emerald-500 rounded-full mr-2"></span> <span id="indicatorText">Sistem Siap</span>
         </div>
@@ -76,6 +107,12 @@
             </div>
         </div>
 
+        <!-- QUICK SCAN BUTTON (NEW) -->
+        <button onclick="startCamera()" class="w-full py-4 rounded-2xl bg-white border-2 border-dashed border-purple-300 text-purple-600 font-bold text-sm flex items-center justify-center space-x-2 hover:bg-purple-50 transition-all">
+            <i class="fas fa-camera"></i>
+            <span>Quick Scan Nota via AI</span>
+        </button>
+
         <!-- TAGIHAN MENDATANG -->
         <div class="glass-card p-6 rounded-[2rem] sm:rounded-[2.5rem] border-t-4 border-t-rose-500">
             <div class="flex justify-between items-center mb-6">
@@ -87,6 +124,7 @@
             </div>
         </div>
 
+        <!-- Statistik Bawah, Grafik, & Tabel (Struktur Asli Tetap) -->
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
             <div class="glass-card p-5 rounded-[2rem] border-l-4 border-emerald-500"><p class="text-slate-400 text-[10px] font-bold uppercase mb-1">Pemasukan</p><h4 id="totalIn" class="text-lg font-bold text-emerald-600">Rp 0</h4></div>
             <div class="glass-card p-5 rounded-[2rem] border-l-4 border-rose-500"><p class="text-slate-400 text-[10px] font-bold uppercase mb-1">Pengeluaran</p><h4 id="totalOut" class="text-lg font-bold text-rose-600">Rp 0</h4></div>
@@ -115,6 +153,15 @@
         <div class="pt-8 pb-4 text-center"><p class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.3em]">Develop by <span class="text-blue-600">Roman</span></p></div>
     </main>
 
+    <!-- LOADING OCR MODAL -->
+    <div id="ocrLoader" class="hidden fixed inset-0 z-[300] bg-slate-900/80 flex items-center justify-center backdrop-blur-sm">
+        <div class="bg-white p-8 rounded-[2rem] text-center max-w-xs animate-in">
+            <div class="w-16 h-16 border-4 border-purple-100 border-t-purple-600 rounded-full animate-spin mx-auto mb-4"></div>
+            <p class="font-bold text-slate-800">AI Sedang Membaca Nota...</p>
+            <p class="text-[10px] text-slate-400 mt-2" id="ocrProgress">Harap tunggu sebentar</p>
+        </div>
+    </div>
+
     <div class="fixed bottom-6 right-6 z-50">
         <button onclick="toggleModal()" class="fab-gradient w-14 h-14 sm:w-16 sm:h-16 text-white rounded-[1.5rem] sm:rounded-[1.8rem] shadow-2xl shadow-blue-300 flex items-center justify-center hover:scale-110 active:scale-95 transition-all"><i class="fas fa-plus text-xl sm:text-2xl"></i></button>
     </div>
@@ -141,12 +188,86 @@
     </div>
 
     <script>
-        const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwgvG2s25PgMQWHTrVL1jV3TuLBkuqUoURg8s0LE66edKMZh4NAOJGB5gmMUsVEdoh8uA/exec";
+        const WEB_APP_URL = "https://script.google.com/macros/s/AKfycby90fi8pkc-kn3RX3sb9oClVwYRE6pktxMhsPnzQjefKiNWHtIm4KU7frcEqYbQNz2v_w/exec";
         let currentYear = new Date().getFullYear();
         let currentMonth = new Date().getMonth();
         let myChart = null;
         let globalData = null;
 
+        // === FUNGSI AI PREDICTION (NEW) ===
+        function processAIPrediction(res) {
+            const history = res.history;
+            const today = new Date();
+            const elapsedDays = today.getDate();
+            const totalDays = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+
+            let totalSpent = 0;
+            history.forEach(row => {
+                const val = parseFloat(row[3]);
+                if (val < 0) totalSpent += Math.abs(val);
+            });
+
+            const dailyAvg = totalSpent / elapsedDays;
+            const prediction = dailyAvg * totalDays;
+
+            document.getElementById('aiPredictionValue').innerText = "Rp " + Math.floor(prediction).toLocaleString('id-ID');
+            
+            const adviceEl = document.getElementById('aiAdvice');
+            if (dailyAvg > 200000) {
+                adviceEl.innerText = "⚠️ Pengeluaran harianmu cukup tinggi. AI menyarankan untuk membatasi belanja non-primer agar sisa saldo terjaga.";
+            } else if (dailyAvg < 50000) {
+                adviceEl.innerText = "✅ Performa luar biasa! Pertahankan pola hemat ini untuk mencapai target tabunganmu lebih cepat.";
+            } else {
+                adviceEl.innerText = "ℹ️ Pengeluaranmu terpantau stabil. Pastikan tetap mencatat setiap transaksi agar prediksi tetap akurat.";
+            }
+        }
+
+        // === FUNGSI SCAN OCR (NEW) ===
+        async function startCamera() {
+            const overlay = document.getElementById('cameraOverlay');
+            overlay.style.display = 'block';
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            document.getElementById('videoFeed').srcObject = stream;
+        }
+
+        function closeCamera() {
+            const stream = document.getElementById('videoFeed').srcObject;
+            if(stream) stream.getTracks().forEach(track => track.stop());
+            document.getElementById('cameraOverlay').style.display = 'none';
+        }
+
+        async function takeSnapshot() {
+            const video = document.getElementById('videoFeed');
+            const canvas = document.getElementById('captureCanvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            const imgData = canvas.toDataURL('image/jpeg');
+            closeCamera();
+            runOCR(imgData);
+        }
+
+        async function runOCR(image) {
+            document.getElementById('ocrLoader').classList.remove('hidden');
+            const worker = await Tesseract.createWorker({
+                logger: m => { if(m.status === 'recognizing text') document.getElementById('ocrProgress').innerText = "Menganalisis: " + Math.floor(m.progress * 100) + "%" }
+            });
+            await worker.loadLanguage('ind');
+            await worker.initialize('ind');
+            const { data: { text } } = await worker.recognize(image);
+            await worker.terminate();
+
+            const numbers = text.match(/\d+[\d.,]*/g);
+            if(numbers) {
+                const cleaned = numbers.map(n => parseInt(n.replace(/[.,]/g, ''))).filter(n => n > 1000);
+                if(cleaned.length > 0) document.getElementById('jmlInput').value = Math.max(...cleaned);
+            }
+            document.getElementById('ketInput').value = "Scan Nota Otomatis";
+            document.getElementById('ocrLoader').classList.add('hidden');
+            toggleModal();
+        }
+
+        // === LOGIKA DASHBOARD ASLI ===
         window.onload = () => { if (localStorage.getItem("authenticated") === "true") { document.getElementById('loginOverlay').style.display = 'none'; changeMonth(0); } };
 
         document.getElementById('loginForm').onsubmit = async (e) => {
@@ -180,6 +301,7 @@
                 const data = await res.json();
                 globalData = data;
                 updateUI(data);
+                processAIPrediction(data);
                 setStatus('Sistem Siap', 'emerald');
             } catch (e) { setStatus('Error!', 'rose'); }
         }
@@ -226,7 +348,6 @@
                 accList.insertAdjacentHTML('beforeend', `<div class="bg-white/50 backdrop-blur px-3 py-1.5 rounded-xl border border-slate-200 text-[9px] sm:text-[10px] font-bold shadow-sm">${name} <span class="text-slate-700">Rp ${bal.toLocaleString('id-ID')}</span></div>`);
             });
 
-            // LOGIKA TAGIHAN MENDATANG (Tanggal > Hari Ini)
             const billContainer = document.getElementById('upcomingBills');
             billContainer.innerHTML = '';
             const today = new Date();
@@ -263,8 +384,6 @@
                 const rDate = new Date(row[0]);
                 const isFuture = rDate > today;
                 const isInc = row[3] > 0;
-                
-                // Tambahkan label "Future" jika belum terpotong
                 const futureLabel = isFuture ? '<span class="text-[8px] bg-slate-100 text-slate-500 px-1 rounded ml-1">PLAN</span>' : '';
                 
                 historyBody.insertAdjacentHTML('beforeend', `
